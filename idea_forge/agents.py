@@ -2,29 +2,54 @@
 
 from __future__ import annotations
 
+import os
+from typing import Type
+
 from crewai import Agent
+from crewai.tools import BaseTool
 from duckduckgo_search import DDGS
-from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from pydantic import BaseModel, Field
 
 
-@tool("trend_complaint_search")
-def trend_complaint_search(query: str) -> str:
-    """Search public web snippets for user complaints and repetitive workflow pain points."""
-    results: list[str] = []
-    with DDGS() as ddgs:
-        for item in ddgs.text(query, max_results=5):
-            title = item.get("title", "")
-            body = item.get("body", "")
-            href = item.get("href", "")
-            results.append(f"- {title}: {body} ({href})")
-    return "\n".join(results) if results else "No results found."
+class TrendComplaintSearchInput(BaseModel):
+    """Input schema for trend complaint search tool."""
+
+    query: str = Field(
+        ...,
+        description="Search query targeting complaints and repetitive workflow pain points.",
+        min_length=3,
+    )
+    max_results: int = Field(
+        default=8,
+        ge=1,
+        le=25,
+        description="Maximum number of search results to return.",
+    )
+
+
+class TrendComplaintSearchTool(BaseTool):
+    """Search public web snippets for complaints and repetitive workflow pain points."""
+
+    name: str = "trend_complaint_search"
+    description: str = (
+        "Search public web snippets for user complaints, repetitive manual tasks, and automation pain points."
+    )
+    args_schema: Type[BaseModel] = TrendComplaintSearchInput
+
+    def _run(self, query: str, max_results: int = 8) -> str:
+        results: list[str] = []
+        with DDGS() as ddgs:
+            for item in ddgs.text(query, max_results=max_results):
+                title = item.get("title", "").strip()
+                body = item.get("body", "").strip()
+                href = item.get("href", "").strip()
+                results.append(f"- {title}: {body} ({href})")
+        return "\n".join(results) if results else "No results found."
 
 
 def _build_llm() -> ChatGoogleGenerativeAI:
     """Create a Gemini chat model for all agents."""
-    import os
-
     model = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
     temperature = float(os.getenv("GEMINI_TEMPERATURE", "0.2"))
     return ChatGoogleGenerativeAI(model=model, temperature=temperature)
@@ -44,7 +69,7 @@ def create_market_scout() -> Agent:
             "hype, and focus on painful repetitive workflows users already pay to solve."
         ),
         llm=_build_llm(),
-        tools=[trend_complaint_search],
+        tools=[TrendComplaintSearchTool()],
         verbose=True,
         allow_delegation=False,
     )
